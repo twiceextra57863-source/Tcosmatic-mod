@@ -1,1 +1,27 @@
-{}
+{
+  "schemaVersion": 1,
+  "id": "tcosmatic",
+  "version": "1.0.0",
+  "name": "Tcosmatic Replay Mod",
+  "description": "Ultimate Replay Mod by Tcosmatic - Record, Edit & Export your Minecraft moments!",
+  "authors": ["Tcosmatic"],
+  "contact": {},
+  "license": "MIT",
+  "icon": "assets/tcosmatic/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.tcosmatic.replay.TcosmaticReplayMod"
+    ],
+    "client": [
+      "com.tcosmatic.replay.client.ReplayClient"
+    ]
+  },
+  "mixins": [],
+  "depends": {
+    "fabricloader": ">=0.15.0",
+    "minecraft": "1.21",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
