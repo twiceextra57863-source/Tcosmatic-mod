@@ -1,460 +1,212 @@
 package com.tcosmatic.replay.client.recording;
 
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.client.world.ClientWorld;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.block.BlockState;
-import net.minecraft.registry.Registries;
+import net.minecraft.client.util.ScreenshotRecorder;
+import net.minecraft.client.texture.NativeImage;
+import net.minecraft.client.render.*;
+import net.minecraft.util.Util;
 import com.tcosmatic.replay.TcosmaticReplayMod;
-import com.tcosmatic.replay.common.ReplayData;
-import com.tcosmatic.replay.common.ReplayMetadata;
-import com.tcosmatic.replay.client.utils.FileManager;
 import com.tcosmatic.replay.client.utils.CompressionUtil;
 
-import java.util.*;
-import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.io.*;
+import java.nio.*;
+import java.util.concurrent.CompletableFuture;
 
-public class ReplayRecorder {
-    private static ReplayRecorder instance;
+public class FrameCapture {
     private final MinecraftClient client;
-    private final ExecutorService recordingExecutor;
-    private final ScheduledExecutorService scheduler;
+    private NativeImage currentFrame;
+    private boolean isCapturing = false;
+    private FrameCaptureCallback callback;
     
-    // Recording state
-    private RecordingSession currentSession;
-    private AtomicBoolean isRecording = new AtomicBoolean(false);
-    private AtomicBoolean isPaused = new AtomicBoolean(false);
-    private AtomicInteger frameCounter = new AtomicInteger(0);
+    // Capture settings
+    private int targetWidth = 1920;
+    private int targetHeight = 1080;
+    private boolean captureDiff = true; // Only capture changed pixels
+    private boolean useGPU = true; // Use GPU for faster capture
     
-    // Queues for multi-threaded processing
-    private final BlockingQueue<FrameCapture> frameQueue;
-    private final BlockingQueue<FrameCapture> compressionQueue;
-    private final BlockingQueue<FrameCapture> saveQueue;
+    // Performance metrics
+    private long lastCaptureTime;
+    private float captureTimeMs;
     
-    // Performance monitoring
-    private long lastFrameTime;
-    private float currentFPS = 20.0f;
-    private int droppedFrames = 0;
+    public interface FrameCaptureCallback {
+        void onFrameCaptured(NativeImage frame, long timestamp);
+        void onCaptureError(Exception e);
+    }
     
-    // Cache for optimized recording
-    private final Map<Integer, EntitySnapshot> lastEntitySnapshot = new ConcurrentHashMap<>();
-    private final Map<BlockPos, BlockState> lastBlockStates = new ConcurrentHashMap<>();
-    private PlayerSnapshot lastPlayerSnapshot;
-    
-    private ReplayRecorder() {
+    public FrameCapture() {
         this.client = MinecraftClient.getInstance();
-        
-        // Initialize thread pools
-        this.recordingExecutor = Executors.newFixedThreadPool(4, r -> {
-            Thread t = new Thread(r, "Tcosmatic-Recorder");
-            t.setDaemon(true);
-            return t;
-        });
-        
-        this.scheduler = Executors.newScheduledThreadPool(2, r -> {
-            Thread t = new Thread(r, "Tcosmatic-Scheduler");
-            t.setDaemon(true);
-            return t;
-        });
-        
-        // Initialize queues with capacity limits
-        this.frameQueue = new LinkedBlockingQueue<>(500);  // Max 500 frames in memory
-        this.compressionQueue = new LinkedBlockingQueue<>(200);
-        this.saveQueue = new LinkedBlockingQueue<>(100);
-        
-        TcosmaticReplayMod.LOGGER.info("🎥 ReplayRecorder initialized");
     }
     
-    public static ReplayRecorder getInstance() {
-        if (instance == null) {
-            instance = new ReplayRecorder();
-        }
-        return instance;
-    }
-    
-    public void startRecording(String worldName) {
-        if (isRecording.get()) {
-            TcosmaticReplayMod.LOGGER.warn("Already recording!");
-            return;
-        }
-        
-        try {
-            // Create new recording session
-            currentSession = new RecordingSession(worldName);
-            frameCounter.set(0);
-            droppedFrames = 0;
-            lastFrameTime = System.currentTimeMillis();
-            
-            // Clear caches
-            lastEntitySnapshot.clear();
-            lastBlockStates.clear();
-            lastPlayerSnapshot = null;
-            
-            // Start recording threads
-            startCaptureThread();
-            startCompressionThread();
-            startSaveThread();
-            
-            // Start monitoring thread
-            startMonitoringThread();
-            
-            isRecording.set(true);
-            isPaused.set(false);
-            
-            TcosmaticReplayMod.LOGGER.info("▶️ Recording started in world: {}", worldName);
-            
-        } catch (Exception e) {
-            TcosmaticReplayMod.LOGGER.error("Failed to start recording", e);
-        }
-    }
-    
-    private void startCaptureThread() {
-        recordingExecutor.submit(() -> {
-            TcosmaticReplayMod.LOGGER.info("Capture thread started");
-            
-            while (isRecording.get()) {
-                try {
-                    if (!isPaused.get() && client.world != null && client.player != null) {
-                        long now = System.currentTimeMillis();
-                        long frameTime = now - lastFrameTime;
-                        
-                        // Target 20 FPS (50ms per frame)
-                        if (frameTime >= 50) {
-                            FrameCapture capture = captureFrame();
-                            if (capture != null) {
-                                if (!frameQueue.offer(capture, 100, TimeUnit.MILLISECONDS)) {
-                                    droppedFrames++;
-                                    TcosmaticReplayMod.LOGGER.warn("Frame queue full, dropped frame. Total dropped: {}", droppedFrames);
-                                }
-                            }
-                            lastFrameTime = now;
-                        }
-                    }
-                    
-                    // Small sleep to prevent CPU hogging
-                    Thread.sleep(5);
-                    
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                } catch (Exception e) {
-                    TcosmaticReplayMod.LOGGER.error("Error in capture thread", e);
-                }
-            }
-            
-            TcosmaticReplayMod.LOGGER.info("Capture thread stopped");
-        });
-    }
-    
-    private void startCompressionThread() {
-        recordingExecutor.submit(() -> {
-            TcosmaticReplayMod.LOGGER.info("Compression thread started");
-            
-            while (isRecording.get() || !frameQueue.isEmpty()) {
-                try {
-                    FrameCapture capture = frameQueue.poll(100, TimeUnit.MILLISECONDS);
-                    if (capture != null) {
-                        // Compress frame data
-                        capture.compressedData = compressFrameData(capture);
-                        compressionQueue.offer(capture);
-                    }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-            }
-            
-            TcosmaticReplayMod.LOGGER.info("Compression thread stopped");
-        });
-    }
-    
-    private void startSaveThread() {
-        recordingExecutor.submit(() -> {
-            TcosmaticReplayMod.LOGGER.info("Save thread started");
-            
-            List<FrameCapture> batch = new ArrayList<>();
-            
-            while (isRecording.get() || !compressionQueue.isEmpty()) {
-                try {
-                    FrameCapture capture = compressionQueue.poll(100, TimeUnit.MILLISECONDS);
-                    if (capture != null) {
-                        batch.add(capture);
-                        
-                        // Save in batches of 50 frames
-                        if (batch.size() >= 50) {
-                            saveBatch(batch);
-                            batch.clear();
-                        }
-                    }
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    break;
-                }
-            }
-            
-            // Save remaining frames
-            if (!batch.isEmpty()) {
-                saveBatch(batch);
-            }
-            
-            TcosmaticReplayMod.LOGGER.info("Save thread stopped");
-        });
-    }
-    
-    private void startMonitoringThread() {
-        scheduler.scheduleAtFixedRate(() -> {
-            if (isRecording.get()) {
-                // Update FPS calculation
-                int framesThisSecond = frameCounter.getAndSet(0);
-                currentFPS = framesThisSecond;
+    public CompletableFuture<NativeImage> captureFrameAsync() {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                long startTime = System.nanoTime();
                 
-                // Log performance stats
-                if (droppedFrames > 0) {
-                    TcosmaticReplayMod.LOGGER.debug("Recording stats - FPS: {:.1f}, Dropped: {}, Queue sizes: {}/{}/{}",
-                        currentFPS, droppedFrames, frameQueue.size(), compressionQueue.size(), saveQueue.size());
+                // Capture using Minecraft's screenshot system
+                NativeImage image = captureScreen();
+                
+                // Resize if needed
+                if (image.getWidth() != targetWidth || image.getHeight() != targetHeight) {
+                    image = resizeImage(image, targetWidth, targetHeight);
+                }
+                
+                // Calculate capture time
+                captureTimeMs = (System.nanoTime() - startTime) / 1_000_000.0f;
+                lastCaptureTime = System.currentTimeMillis();
+                
+                return image;
+                
+            } catch (Exception e) {
+                TcosmaticReplayMod.LOGGER.error("Frame capture failed", e);
+                throw new RuntimeException(e);
+            }
+        });
+    }
+    
+    private NativeImage captureScreen() {
+        // Use Minecraft's screenshot system
+        return ScreenshotRecorder.takeScreenshot(client.getFramebuffer());
+    }
+    
+    private NativeImage resizeImage(NativeImage original, int width, int height) {
+        NativeImage resized = new NativeImage(width, height, false);
+        
+        // Simple bilinear resize
+        float xScale = (float)original.getWidth() / width;
+        float yScale = (float)original.getHeight() / height;
+        
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                int srcX = (int)(x * xScale);
+                int srcY = (int)(y * yScale);
+                int color = original.getColor(srcX, srcY);
+                resized.setColor(x, y, color);
+            }
+        }
+        
+        original.close();
+        return resized;
+    }
+    
+    public byte[] compressFrame(NativeImage frame) {
+        try {
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            
+            // Write header
+            baos.write(frame.getWidth() >> 8);
+            baos.write(frame.getWidth() & 0xFF);
+            baos.write(frame.getHeight() >> 8);
+            baos.write(frame.getHeight() & 0xFF);
+            
+            // Convert to RGB and compress
+            ByteBuffer buffer = ByteBuffer.allocate(frame.getWidth() * frame.getHeight() * 3);
+            
+            for (int y = 0; y < frame.getHeight(); y++) {
+                for (int x = 0; x < frame.getWidth(); x++) {
+                    int color = frame.getColor(x, y);
+                    buffer.put((byte)((color >> 16) & 0xFF)); // R
+                    buffer.put((byte)((color >> 8) & 0xFF));  // G
+                    buffer.put((byte)(color & 0xFF));         // B
                 }
             }
-        }, 1, 1, TimeUnit.SECONDS);
-    }
-    
-    private FrameCapture captureFrame() {
-        try {
-            FrameCapture capture = new FrameCapture();
-            capture.timestamp = System.currentTimeMillis();
-            capture.frameNumber = frameCounter.incrementAndGet();
             
-            // Capture player data
-            capture.player = capturePlayerSnapshot();
+            buffer.flip();
+            byte[] rgbData = new byte[buffer.remaining()];
+            buffer.get(rgbData);
             
-            // Capture entity changes (only changed entities)
-            capture.entities = captureEntityChanges();
-            
-            // Capture block changes (only changed blocks)
-            capture.blockChanges = captureBlockChanges();
-            
-            // Capture world time/weather
-            capture.worldTime = client.world.getTime();
-            capture.raining = client.world.isRaining();
-            capture.thundering = client.world.isThundering();
-            
-            return capture;
+            // Compress with high quality
+            return CompressionUtil.compressImage(rgbData, frame.getWidth(), frame.getHeight());
             
         } catch (Exception e) {
-            TcosmaticReplayMod.LOGGER.error("Failed to capture frame", e);
-            return null;
-        }
-    }
-    
-    private PlayerSnapshot capturePlayerSnapshot() {
-        if (client.player == null) return null;
-        
-        PlayerSnapshot snapshot = new PlayerSnapshot();
-        snapshot.x = client.player.getX();
-        snapshot.y = client.player.getY();
-        snapshot.z = client.player.getZ();
-        snapshot.yaw = client.player.getYaw();
-        snapshot.pitch = client.player.getPitch();
-        snapshot.headYaw = client.player.headYaw;
-        snapshot.health = client.player.getHealth();
-        snapshot.foodLevel = client.player.getHungerManager().getFoodLevel();
-        snapshot.sprinting = client.player.isSprinting();
-        snapshot.sneaking = client.player.isSneaking();
-        snapshot.swimming = client.player.isSwimming();
-        snapshot.falling = client.player.getVelocity().y < -0.5;
-        snapshot.velocity = client.player.getVelocity();
-        
-        // Capture main hand item
-        if (client.player.getMainHandStack() != null) {
-            snapshot.mainHandItem = Registries.ITEM.getId(
-                client.player.getMainHandStack().getItem()).toString();
-        }
-        
-        return snapshot;
-    }
-    
-    private List<EntitySnapshot> captureEntityChanges() {
-        List<EntitySnapshot> changes = new ArrayList<>();
-        if (client.world == null) return changes;
-        
-        for (Entity entity : client.world.getEntities()) {
-            // Skip players (already captured separately)
-            if (entity instanceof PlayerEntity) continue;
-            
-            int id = entity.getId();
-            EntitySnapshot current = new EntitySnapshot(entity);
-            EntitySnapshot last = lastEntitySnapshot.get(id);
-            
-            // Check if entity moved or changed significantly
-            if (shouldCaptureEntity(current, last)) {
-                changes.add(current);
-                lastEntitySnapshot.put(id, current);
-            }
-        }
-        
-        // Clean up dead entities
-        lastEntitySnapshot.keySet().removeIf(id -> client.world.getEntityById(id) == null);
-        
-        return changes;
-    }
-    
-    private boolean shouldCaptureEntity(EntitySnapshot current, EntitySnapshot last) {
-        if (last == null) return true;
-        
-        // Check position change (threshold 0.1 blocks)
-        double dx = current.x - last.x;
-        double dy = current.y - last.y;
-        double dz = current.z - last.z;
-        if (dx*dx + dy*dy + dz*dz > 0.01) return true;
-        
-        // Check rotation change (threshold 5 degrees)
-        if (Math.abs(current.yaw - last.yaw) > 5 || 
-            Math.abs(current.pitch - last.pitch) > 5) return true;
-        
-        return false;
-    }
-    
-    private List<BlockChange> captureBlockChanges() {
-        List<BlockChange> changes = new ArrayList<>();
-        if (client.world == null || client.interactionManager == null) return changes;
-        
-        // This would be integrated with a block change listener
-        // For now, we'll track changes via a simple cache
-        
-        return changes;
-    }
-    
-    private byte[] compressFrameData(FrameCapture capture) {
-        try {
-            // Simple serialization for now
-            // In production, use Protocol Buffers or similar
-            return CompressionUtil.compressFrameData(capture);
-        } catch (Exception e) {
-            TcosmaticReplayMod.LOGGER.error("Failed to compress frame", e);
+            TcosmaticReplayMod.LOGGER.error("Frame compression failed", e);
             return new byte[0];
         }
     }
     
-    private void saveBatch(List<FrameCapture> batch) {
+    public NativeImage decompressFrame(byte[] data) {
         try {
-            currentSession.addFrames(batch);
+            // Read header
+            int width = ((data[0] & 0xFF) << 8) | (data[1] & 0xFF);
+            int height = ((data[2] & 0xFF) << 8) | (data[3] & 0xFF);
             
-            // Auto-save every 1000 frames
-            if (currentSession.getFrameCount() % 1000 == 0) {
-                currentSession.saveToDisk();
+            // Decompress image data
+            byte[] rgbData = CompressionUtil.decompressImage(data, 4);
+            
+            // Create NativeImage
+            NativeImage image = new NativeImage(width, height, false);
+            
+            ByteBuffer buffer = ByteBuffer.wrap(rgbData);
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    int r = buffer.get() & 0xFF;
+                    int g = buffer.get() & 0xFF;
+                    int b = buffer.get() & 0xFF;
+                    int color = (0xFF << 24) | (r << 16) | (g << 8) | b;
+                    image.setColor(x, y, color);
+                }
             }
+            
+            return image;
             
         } catch (Exception e) {
-            TcosmaticReplayMod.LOGGER.error("Failed to save batch", e);
+            TcosmaticReplayMod.LOGGER.error("Frame decompression failed", e);
+            return null;
         }
     }
     
-    public void pauseRecording() {
-        if (isRecording.get() && !isPaused.get()) {
-            isPaused.set(true);
-            TcosmaticReplayMod.LOGGER.info("⏸️ Recording paused at frame {}", frameCounter.get());
-        }
-    }
-    
-    public void resumeRecording() {
-        if (isRecording.get() && isPaused.get()) {
-            isPaused.set(false);
-            lastFrameTime = System.currentTimeMillis(); // Reset timing
-            TcosmaticReplayMod.LOGGER.info("▶️ Recording resumed");
-        }
-    }
-    
-    public void stopRecording() {
-        if (!isRecording.get()) return;
+    public byte[] captureDiff(NativeImage previous, NativeImage current) {
+        if (previous == null || current == null) return null;
         
-        TcosmaticReplayMod.LOGGER.info("⏹️ Stopping recording...");
-        isRecording.set(false);
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        DataOutputStream dos = new DataOutputStream(baos);
         
         try {
-            // Wait for queues to empty (max 5 seconds)
-            int timeout = 0;
-            while ((!frameQueue.isEmpty() || !compressionQueue.isEmpty()) && timeout < 50) {
-                Thread.sleep(100);
-                timeout++;
+            int changedPixels = 0;
+            
+            for (int y = 0; y < current.getHeight(); y++) {
+                for (int x = 0; x < current.getWidth(); x++) {
+                    int prevColor = previous.getColor(x, y);
+                    int currColor = current.getColor(x, y);
+                    
+                    if (prevColor != currColor) {
+                        changedPixels++;
+                        
+                        // Write position and color
+                        dos.writeShort(x);
+                        dos.writeShort(y);
+                        dos.writeInt(currColor);
+                    }
+                }
             }
             
-            // Final save
-            if (currentSession != null) {
-                currentSession.finalizeAndSave();
-                
-                // Create metadata
-                ReplayMetadata metadata = currentSession.createMetadata();
-                FileManager.getInstance().saveMetadata(metadata);
-                
-                TcosmaticReplayMod.LOGGER.info("✅ Recording saved: {} frames, {} dropped", 
-                    frameCounter.get(), droppedFrames);
-            }
+            // Write header with changed pixel count
+            ByteArrayOutputStream header = new ByteArrayOutputStream();
+            DataOutputStream headerOut = new DataOutputStream(header);
+            headerOut.writeInt(changedPixels);
+            headerOut.writeInt(current.getWidth());
+            headerOut.writeInt(current.getHeight());
             
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-        
-        // Shutdown threads
-        recordingExecutor.shutdown();
-        scheduler.shutdown();
-    }
-    
-    public boolean isRecording() { return isRecording.get(); }
-    public boolean isPaused() { return isPaused.get(); }
-    public int getFrameCount() { return frameCounter.get(); }
-    public float getCurrentFPS() { return currentFPS; }
-    public int getDroppedFrames() { return droppedFrames; }
-    
-    // Inner classes for data structures
-    public static class FrameCapture {
-        public int frameNumber;
-        public long timestamp;
-        public PlayerSnapshot player;
-        public List<EntitySnapshot> entities;
-        public List<BlockChange> blockChanges;
-        public long worldTime;
-        public boolean raining;
-        public boolean thundering;
-        public byte[] compressedData;
-    }
-    
-    public static class PlayerSnapshot {
-        public double x, y, z;
-        public float yaw, pitch, headYaw;
-        public float health;
-        public int foodLevel;
-        public boolean sprinting, sneaking, swimming, falling;
-        public Vec3d velocity;
-        public String mainHandItem;
-    }
-    
-    public static class EntitySnapshot {
-        public int id;
-        public String type;
-        public double x, y, z;
-        public float yaw, pitch;
-        public Vec3d velocity;
-        
-        public EntitySnapshot(Entity entity) {
-            this.id = entity.getId();
-            this.type = Registries.ENTITY_TYPE.getId(entity.getType()).toString();
-            this.x = entity.getX();
-            this.y = entity.getY();
-            this.z = entity.getZ();
-            this.yaw = entity.getYaw();
-            this.pitch = entity.getPitch();
-            this.velocity = entity.getVelocity();
+            // Combine header and diff data
+            byte[] headerBytes = header.toByteArray();
+            byte[] diffBytes = baos.toByteArray();
+            
+            byte[] result = new byte[headerBytes.length + diffBytes.length];
+            System.arraycopy(headerBytes, 0, result, 0, headerBytes.length);
+            System.arraycopy(diffBytes, 0, result, headerBytes.length, diffBytes.length);
+            
+            return result;
+            
+        } catch (IOException e) {
+            TcosmaticReplayMod.LOGGER.error("Diff capture failed", e);
+            return null;
         }
     }
     
-    public static class BlockChange {
-        public BlockPos pos;
-        public int oldState;
-        public int newState;
+    public void setTargetResolution(int width, int height) {
+        this.targetWidth = width;
+        this.targetHeight = height;
     }
-        }
+    
+    public float getCaptureTimeMs() { return captureTimeMs; }
+    public long getLastCaptureTime() { return lastCaptureTime; }
+}
