@@ -1,43 +1,52 @@
-name: Build Tcosmatic Replay Mod for POJAV
+name: Build Tcosmatic Replay Mod
 
 on:
   push:
     branches: [ "main", "master" ]
   pull_request:
     branches: [ "main", "master" ]
-  workflow_dispatch:  # Manual trigger from GitHub website
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    
     steps:
-      - name: 📥 Checkout Repository
+      - name: 📥 Checkout code
         uses: actions/checkout@v4
       
-      # 🔥 FIX: Setup Java 21 with Temurin distribution
-      - name: 🔧 Setup Java 21 (Temurin)
+      # 🔥 METHOD 1: setup-java action (Latest version)
+      - name: 🔧 Setup Java 21 (Eclipse Temurin)
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'  # Must specify distribution
-          java-version: '21'
-          cache: 'gradle'  # Cache Gradle dependencies
+          distribution: 'temurin'           # Must specify distribution
+          java-version: '21'                 # Java 21 for Minecraft 1.21
+          java-package: jdk                  # JDK, not JRE
+          architecture: x64
+          check-latest: false
+          cache: 'gradle'
       
       # 🔥 Verify Java installation
       - name: 🔍 Verify Java
         run: |
+          echo "=== Java Version ==="
           java -version
+          echo "=== Java Compiler ==="
           javac -version
-          echo "JAVA_HOME=$JAVA_HOME"
+          echo "=== JAVA_HOME ==="
+          echo $JAVA_HOME
+          echo "=== PATH ==="
+          echo $PATH
       
-      # 🔥 Make gradlew executable
+      # 🔥 Fix gradle permissions
       - name: 🔧 Make gradlew executable
         run: chmod +x gradlew
       
-      # 🔥 Fix gradle.properties - remove Java home
+      # 🔥 Clean gradle.properties (remove Java home)
       - name: 🔧 Fix gradle.properties
         run: |
           if [ -f gradle.properties ]; then
+            echo "Original gradle.properties:"
+            cat gradle.properties
             sed -i '/org.gradle.java.home/d' gradle.properties
             echo "✅ Fixed gradle.properties"
           else
@@ -50,13 +59,14 @@ jobs:
         env:
           JAVA_HOME: ${{ env.JAVA_HOME }}
       
-      # 🔥 List build files
-      - name: 📦 List Build Files
+      # 🔥 List build artifacts
+      - name: 📦 List build files
         run: |
           ls -la build/libs/ || echo "No build files yet"
+          find . -name "*.jar" -type f
       
       # 🔥 Upload artifacts
-      - name: 📤 Upload Build Artifacts
+      - name: 📤 Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Tcosmatic-ReplayMod-POJAV
@@ -65,3 +75,4 @@ jobs:
             !build/libs/*-sources.jar
             !build/libs/*-javadoc.jar
           if-no-files-found: warn
+          retention-days: 30
