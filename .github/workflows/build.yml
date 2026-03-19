@@ -1,0 +1,148 @@
+# Tcosmatic Replay Mod - Build Pipeline
+name: Build Tcosmatic Replay Mod
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch: # Manual trigger
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        java: [21]  # Minecraft 1.21 needs Java 21
+        loader: [fabric]
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: 🔧 Setup JDK ${{ matrix.java }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: 'temurin'
+          cache: gradle
+      
+      - name: 🔧 Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: wrapper
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master' }}
+      
+      - name: 🔍 Grant execute permission for gradlew
+        run: chmod +x gradlew
+      
+      - name: 🏗️ Build with Gradle
+        run: ./gradlew build --no-daemon --stacktrace
+      
+      - name: 📦 Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tcosmatic-ReplayMod-${{ matrix.loader }}-${{ github.sha }}
+          path: |
+            build/libs/*.jar
+            !build/libs/*-sources.jar
+            !build/libs/*-javadoc.jar
+          retention-days: 30
+      
+      - name: 📊 Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.loader }}
+          path: build/test-results/
+          retention-days: 30
+      
+      - name: 📈 Size Report
+        run: |
+          echo "📊 Build Size Report:"
+          ls -lh build/libs/
+          echo "Total size: $(du -sh build/libs/ | cut -f1)"
+  
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      
+      - name: 🔍 Grant execute permission for gradlew
+        run: chmod +x gradlew
+      
+      - name: 🧪 Run Tests
+        run: ./gradlew test --no-daemon
+      
+      - name: 📊 Test Report
+        if: always()
+        run: |
+          echo "🧪 Test Results:"
+          cat build/test-results/test/*.xml || true
+  
+  release:
+    runs-on: ubuntu-latest
+    needs: [build, test]
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+      - name: 📥 Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: Tcosmatic-ReplayMod-*
+          path: artifacts
+          merge-multiple: true
+      
+      - name: 📦 Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/*.jar
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          name: Tcosmatic Replay Mod ${{ github.ref_name }}
+          body: |
+            ## 🚀 Tcosmatic Replay Mod ${{ github.ref_name }}
+            
+            ### ✨ Features:
+            - Full replay recording system
+            - Multi-threaded capture pipeline
+            - Delta compression for efficiency
+            - Export to MP4 with FFmpeg
+            - Keyframe editor with camera paths
+            - Cross-platform (POJAV + Desktop)
+            
+            ### 📦 Installation:
+            1. Download the JAR file
+            2. Place in `.minecraft/mods/` folder
+            3. Launch with Fabric Loader 0.15.0+
+            
+            ### 🔧 Requirements:
+            - Minecraft 1.21
+            - Fabric API
+            - Java 21+
+            
+            ### 💀 Made by Tcosmatic
+            
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  
+  cache-cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🧹 Cleanup Gradle Cache
+        run: |
+          rm -rf ~/.gradle/caches/
+          echo "Gradle cache cleaned!"
