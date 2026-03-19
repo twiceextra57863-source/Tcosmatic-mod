@@ -1,0 +1,289 @@
+// Tcosmatic Replay Mod - Main Build Script
+plugins {
+    id 'fabric-loom' version '1.5-SNAPSHOT'
+    id 'maven-publish'
+    id 'java-library'
+    id 'eclipse'
+    id 'idea'
+}
+
+// Basic Info
+version = project.mod_version
+group = project.maven_group
+
+// Java version
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+    
+    withSourcesJar()
+    withJavadocJar()
+}
+
+// Repositories
+repositories {
+    mavenCentral()
+    maven {
+        name = "Fabric"
+        url = "https://maven.fabricmc.net/"
+    }
+    maven {
+        name = "Tcosmatic"
+        url = "https://maven.tcosmatic.com/"
+    }
+    maven {
+        name = "Modrinth"
+        url = "https://api.modrinth.com/maven"
+    }
+    maven {
+        name = "CurseForge"
+        url = "https://cursemaven.com"
+    }
+    flatDir {
+        dirs 'libs'
+    }
+}
+
+// Dependencies
+dependencies {
+    // Minecraft
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    
+    // Mappings
+    mappings loom.officialMojangMappings()
+    
+    // Fabric Loader
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    
+    // Fabric API
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+    
+    // FFmpeg for video export (embedded)
+    include implementation("net.bramp.ffmpeg:ffmpeg:0.8.0")
+    
+    // JSON Processing
+    include implementation("com.google.code.gson:gson:2.10.1")
+    
+    // Compression utilities
+    include implementation("org.apache.commons:commons-compress:1.24.0")
+    
+    // Testing
+    testImplementation "net.fabricmc:fabric-loader-junit:${project.loader_version}"
+    testImplementation "org.junit.jupiter:junit-jupiter:5.9.2"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+// Process resources
+processResources {
+    inputs.property "version", project.version
+    inputs.property "loader_version", project.loader_version
+    inputs.property "minecraft_version", project.minecraft_version
+    
+    filesMatching("fabric.mod.json") {
+        expand([
+            "version": project.version,
+            "loader_version": project.loader_version,
+            "minecraft_version": project.minecraft_version
+        ])
+    }
+    
+    filesMatching("*.mixins.json") {
+        expand([
+            "version": project.version
+        ])
+    }
+}
+
+// Compile options
+tasks.withType(JavaCompile).configureEach {
+    it.options.encoding = "UTF-8"
+    it.options.release = 21
+    it.options.compilerArgs << "-Xlint:all" << "-Werror"
+}
+
+// Jar tasks
+jar {
+    from("LICENSE") {
+        rename { "${it}_${project.archives_base_name}" }
+    }
+    
+    manifest {
+        attributes([
+            "Specification-Title": "Tcosmatic Replay Mod",
+            "Specification-Vendor": "Tcosmatic",
+            "Specification-Version": "1",
+            "Implementation-Title": project.name,
+            "Implementation-Version": project.version,
+            "Implementation-Vendor": "Tcosmatic",
+            "Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ"),
+            "Automatic-Module-Name": "com.tcosmatic.replay"
+        ])
+    }
+}
+
+// Sources jar
+task sourcesJar(type: Jar, dependsOn: classes) {
+    archiveClassifier = 'sources'
+    from sourceSets.main.allSource
+}
+
+// Javadoc jar
+javadocJar {
+    from javadoc
+}
+
+// Javadoc options
+javadoc {
+    options {
+        encoding = 'UTF-8'
+        charSet = 'UTF-8'
+        author = true
+        version = true
+        title = "Tcosmatic Replay Mod ${project.version} API"
+        windowTitle = "Tcosmatic Replay Mod API"
+        memberLevel = JavadocMemberLevel.PUBLIC
+        links "https://docs.oracle.com/en/java/javase/21/docs/api/"
+        addStringOption('Xdoclint:none', '-quiet')
+    }
+}
+
+// Remap Jars
+remapJar {
+    archiveBaseName.set(project.archives_base_name)
+    archiveVersion.set(project.version)
+    archiveClassifier.set("")
+}
+
+// Testing
+test {
+    useJUnitPlatform()
+    testLogging {
+        events "passed", "skipped", "failed"
+        showStandardStreams = true
+        showExceptions = true
+        showCauses = true
+        showStackTraces = true
+    }
+}
+
+// Loom settings
+loom {
+    accessWidenerPath = file("src/main/resources/tcosmatic.accesswidener")
+    
+    runs {
+        client {
+            client()
+            setConfigName("Minecraft Client")
+            ideConfigGenerated(true)
+            runDir("run")
+        }
+        
+        server {
+            server()
+            setConfigName("Minecraft Server")
+            ideConfigGenerated(true)
+            runDir("run")
+        }
+        
+        testclient {
+            client()
+            setConfigName("Test Client")
+            ideConfigGenerated(true)
+            runDir("run")
+            
+            property("fabric.log.level", "debug")
+            property("tcosmatic.debug", "true")
+        }
+    }
+}
+
+// Publishing
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+            
+            artifact sourcesJar {
+                classifier "sources"
+            }
+            
+            artifact javadocJar {
+                classifier "javadoc"
+            }
+            
+            pom {
+                name = "Tcosmatic Replay Mod"
+                description = "Ultimate Replay Mod for Minecraft"
+                url = "https://github.com/tcosmatic/replaymod"
+                
+                licenses {
+                    license {
+                        name = "MIT License"
+                        url = "https://opensource.org/licenses/MIT"
+                    }
+                }
+                
+                developers {
+                    developer {
+                        id = "tcosmatic"
+                        name = "Tcosmatic"
+                        email = "dev@tcosmatic.com"
+                    }
+                }
+                
+                scm {
+                    connection = "scm:git:git://github.com/tcosmatic/replaymod.git"
+                    developerConnection = "scm:git:ssh://github.com/tcosmatic/replaymod.git"
+                    url = "https://github.com/tcosmatic/replaymod"
+                }
+            }
+        }
+    }
+    
+    repositories {
+        maven {
+            name = "local"
+            url = layout.buildDirectory.dir("repo")
+        }
+        
+        maven {
+            name = "github"
+            url = uri("https://maven.pkg.github.com/tcosmatic/replaymod")
+            credentials {
+                username = project.findProperty("gpr.user") ?: System.getenv("GITHUB_ACTOR")
+                password = project.findProperty("gpr.key") ?: System.getenv("GITHUB_TOKEN")
+            }
+        }
+    }
+}
+
+// Custom tasks
+task printClasspath {
+    doLast {
+        configurations.compileClasspath.each { println it }
+    }
+}
+
+task copyToServer(type: Copy) {
+    from remapJar
+    into "server/mods"
+}
+
+task runClient(type: JavaExec) {
+    dependsOn remapJar
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = "net.fabricmc.loader.impl.launch.knot.KnotClient"
+    args "--assetIndex", "1.21", "--assetsDir", "run/assets"
+}
+
+task cleanBuild {
+    dependsOn clean
+    dependsOn build
+    tasks.findByName('build').mustRunAfter 'clean'
+}
+
+// Build finished message
+gradle.buildFinished {
+    println "☠️  TCOSMATIC REPLAY MOD BUILD COMPLETE! ☠️"
+    println "📦 Check build/libs/ for the mod JAR"
+}
