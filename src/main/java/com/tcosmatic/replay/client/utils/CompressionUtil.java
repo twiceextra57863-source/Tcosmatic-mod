@@ -178,3 +178,27 @@ public class CompressionUtil {
     }
     
     // Verify replay file integrity
+    public static boolean verifyReplayFile(String filename) {
+        try {
+            Path path = Paths.get("Tcosmatic/replays/" + filename);
+            if (!Files.exists(path)) {
+                path = Paths.get("Tcosmatic/replays/" + filename + ".tcos");
+            }
+            
+            byte[] data = Files.readAllBytes(path);
+            
+            // Check magic number
+            if (data.length < 4) return false;
+            String magic = new String(data, 0, 4);
+            if (!magic.equals("TCOS")) return false;
+            
+            // Try to decompress
+            decompressReplay(data);
+            return true;
+            
+        } catch (Exception e) {
+            TcosmaticReplayMod.LOGGER.error("Replay file corrupted: {}", filename, e);
+            return false;
+        }
+    }
+}
