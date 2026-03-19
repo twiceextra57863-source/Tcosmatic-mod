@@ -1,0 +1,26 @@
+// Tcosmatic Replay Mod - Settings
+pluginManagement {
+    repositories {
+        maven {
+            name = 'Fabric'
+            url = 'https://maven.fabricmc.net/'
+        }
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'Tcosmatic-ReplayMod'
+
+// Enable Gradle's configuration cache
+enableFeaturePreview('STABLE_CONFIGURATION_CACHE')
+
+// Enable type-safe project accessors
+enableFeaturePreview('TYPESAFE_PROJECT_ACCESSORS')
+
+// Cache checksums for better performance
+buildCache {
+    local {
+        isEnabled = true
+    }
+}
