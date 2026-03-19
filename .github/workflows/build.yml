@@ -1,35 +1,54 @@
-name: Build Tcosmatic Replay Mod
+name: Build Tcosmatic Replay Mod for POJAV
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:  # Manual trigger from GitHub website
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v4
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
       
-      - name: Setup Java 21
+      - name: 🔧 Setup Java 21 (Temurin)
         uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
-          
-      - name: Fix gradle.properties
+          cache: gradle
+      
+      - name: 🔧 Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: wrapper
+      
+      - name: 🔍 Make gradlew executable
+        run: chmod +x gradlew
+      
+      - name: 🏗️ Fix gradle.properties (Remove Java Home)
         run: |
-          # Remove Java home property
           sed -i '/org.gradle.java.home/d' gradle.properties || true
           echo "✅ Fixed gradle.properties"
-          
-      - name: Make gradlew executable
-        run: chmod +x gradlew
-        
-      - name: Build with Gradle
-        run: ./gradlew build --no-daemon --stacktrace
-        
-      - name: Upload artifacts
+      
+      - name: 🏗️ Build with Gradle
+        run: |
+          ./gradlew build --no-daemon --stacktrace || \
+          ./gradlew build --no-daemon --stacktrace --refresh-dependencies
+      
+      - name: 📦 List Build Files
+        run: ls -la build/libs/
+      
+      - name: 📤 Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Tcosmatic-ReplayMod
-          path: build/libs/*.jar
+          name: Tcosmatic-ReplayMod-POJAV
+          path: |
+            build/libs/*.jar
+            !build/libs/*-sources.jar
+            !build/libs/*-javadoc.jar
+          if-no-files-found: error
