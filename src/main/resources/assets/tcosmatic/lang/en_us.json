@@ -1,2 +1,20 @@
 {
+  "key.tcosmatic.open_dashboard": "Open Tcosmatic Dashboard",
+  "key.tcosmatic.scroll_up": "Scroll Up",
+  "key.tcosmatic.scroll_down": "Scroll Down",
+  "category.tcosmatic.replay": "Tcosmatic Replay Mod",
+  
+  "screen.tcosmatic.dashboard": "Tcosmatic Dashboard",
+  "screen.tcosmatic.replays": "Your Replays",
+  "screen.tcosmatic.editor": "Replay Editor",
+  
+  "button.tcosmatic.record": "Start Recording",
+  "button.tcosmatic.pause": "Pause Recording",
+  "button.tcosmatic.stop": "Stop Recording",
+  "button.tcosmatic.export": "Export Video",
+  
+  "status.tcosmatic.recording": "⏺️ Recording...",
+  "status.tcosmatic.paused": "⏸️ Paused",
+  "status.tcosmatic.idle": "⚫ Idle",
+  "status.tcosmatic.exporting": "📤 Exporting... {0}%"
 }
