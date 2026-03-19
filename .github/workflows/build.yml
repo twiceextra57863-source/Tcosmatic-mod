@@ -10,11 +10,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Repo checkout
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Step 2: Setup Java 21
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
@@ -22,15 +20,12 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
-      # Step 3: Grant permission to gradlew
       - name: Make gradlew executable
         run: chmod +x gradlew
 
-      # Step 4: Build with Gradle
       - name: Build mod
         run: ./gradlew build
 
-      # Step 5: Upload build artifact (JAR)
       - name: Upload build output
         uses: actions/upload-artifact@v4
         with:
