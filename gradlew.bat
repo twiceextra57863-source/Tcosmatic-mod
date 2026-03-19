@@ -1,14 +1,10 @@
 @rem
-@rem Copyright 2015 the original author or authors.
-@rem SPDX-License-Identifier: Apache-2.0
-@rem
-@rem Tcosmatic Replay Mod - Gradle Wrapper Script for Windows
+@rem Tcosmatic Replay Mod - FIXED Gradle Wrapper for Windows
 @rem
 
 @echo off
 setlocal enabledelayedexpansion
 
-rem Tcosmatic Banner
 echo ☠️  TCOSMATIC REPLAY MOD - GRADLE BUILDER ☠️
 echo 🔥 Building Ultimate Replay Mod for Minecraft 1.21 🔥
 echo.
@@ -26,72 +22,42 @@ if not defined JAVA_VERSION (
     exit /b 1
 )
 
+echo ✅ Found Java version: %JAVA_VERSION%
+
 if %JAVA_VERSION% LSS %REQUIRED_JAVA_VERSION% (
-    echo ❌ ERROR: Java %REQUIRED_JAVA_VERSION% or higher is required for Tcosmatic Replay Mod
-    echo Current Java version: %JAVA_VERSION%
-    echo Please install Java %REQUIRED_JAVA_VERSION%+
+    echo ❌ ERROR: Java %REQUIRED_JAVA_VERSION%+ required! Found Java %JAVA_VERSION%
     exit /b 1
 )
 
-rem Set local scope for the variables with windows NT shell
-if "%OS%"=="Windows_NT" setlocal
+rem Auto-detect JAVA_HOME if not set
+if "%JAVA_HOME%"=="" (
+    echo 🔍 JAVA_HOME not set, checking common locations...
+    
+    if exist "C:\Program Files\Java\jdk-21" (
+        set JAVA_HOME=C:\Program Files\Java\jdk-21
+        echo ✅ Found Java at: !JAVA_HOME!
+    ) else if exist "C:\Program Files\Eclipse Adoptium\jdk-21" (
+        set JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-21
+        echo ✅ Found Java at: !JAVA_HOME!
+    ) else if exist "C:\Program Files\Amazon Corretto\jdk21" (
+        set JAVA_HOME=C:\Program Files\Amazon Corretto\jdk21
+        echo ✅ Found Java at: !JAVA_HOME!
+    ) else (
+        echo ⚠️  Using system Java (JAVA_HOME not set)
+    )
+)
 
 set DIRNAME=%~dp0
-if "%DIRNAME%"=="" set DIRNAME=.
-set APP_BASE_NAME=%~n0
 set APP_HOME=%DIRNAME%
-
-set DEFAULT_JVM_OPTS="-Xmx4G" "-XX:MaxMetaspaceSize=512m" "-XX:+HeapDumpOnOutOfMemoryError" "-Dfile.encoding=UTF-8"
-
-@rem Find java.exe
-if defined JAVA_HOME goto findJavaFromJavaHome
-
-set JAVA_EXE=java.exe
-%JAVA_EXE% -version >NUL 2>&1
-if "%ERRORLEVEL%" == "0" goto execute
-
-echo.
-echo ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH.
-echo.
-echo Please set the JAVA_HOME variable in your environment to match the
-echo location of your Java installation.
-echo.
-goto fail
-
-:findJavaFromJavaHome
-set JAVA_HOME=%JAVA_HOME:"=%
-set JAVA_EXE=%JAVA_HOME%/bin/java.exe
-
-if exist "%JAVA_EXE%" goto execute
-
-echo.
-echo ERROR: JAVA_HOME is set to an invalid directory: %JAVA_HOME%
-echo.
-echo Please set the JAVA_HOME variable in your environment to match the
-echo location of your Java installation.
-echo.
-goto fail
-
-:execute
-@rem Setup the command line
-
 set CLASSPATH=%APP_HOME%\gradle\wrapper\gradle-wrapper.jar
 
-@rem Execute Gradle
-"%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% -cp "%CLASSPATH%" org.gradle.wrapper.GradleWrapperMain %*
+set DEFAULT_JVM_OPTS=-Xmx4G -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8
 
-:end
-@rem End local scope for the variables with windows NT shell
-if "%ERRORLEVEL%"=="0" goto mainEnd
+"%JAVA_EXE%" %DEFAULT_JVM_OPTS% -cp "%CLASSPATH%" org.gradle.wrapper.GradleWrapperMain %*
 
-:fail
-rem Set variable GRADLE_EXIT_CONSOLE if you need the _script_ return code instead of
-rem the _cmd.exe /c_ return code!
-if not "" == "%GRADLE_EXIT_CONSOLE%" exit 1
-exit /b 1
-
-:mainEnd
-if "%OS%"=="Windows_NT" endlocal
-
-echo.
-echo ✅ Build complete! Check build/libs/ folder
+if %ERRORLEVEL% equ 0 (
+    echo ✅ Build complete!
+) else (
+    echo ❌ Build failed with error code %ERRORLEVEL%
+    exit /b %ERRORLEVEL%
+)
