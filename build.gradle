@@ -1,41 +1,20 @@
-// Tcosmatic Replay Mod - Build Script for POJAV
-
 plugins {
     id 'fabric-loom' version '1.5-SNAPSHOT'
-    id 'maven-publish'
 }
 
 version = project.mod_version
 group = project.maven_group
 
-java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
-    withSourcesJar()
-}
-
 repositories {
     mavenCentral()
-    maven {
-        name = "Fabric"
-        url = "https://maven.fabricmc.net/"
-    }
+    maven { url "https://maven.fabricmc.net/" }
 }
 
 dependencies {
-    // Minecraft
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
     mappings loom.officialMojangMappings()
-    
-    // Fabric
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
-    
-    // FFmpeg for video export (embedded)
-    include implementation("net.bramp.ffmpeg:ffmpeg:0.8.0")
-    
-    // JSON Processing
-    include implementation("com.google.code.gson:gson:2.10.1")
 }
 
 processResources {
@@ -45,51 +24,13 @@ processResources {
     }
 }
 
-tasks.withType(JavaCompile).configureEach {
-    it.options.encoding = "UTF-8"
-    it.options.release = 21
+tasks.withType(JavaCompile) {
+    options.encoding = "UTF-8"
+    options.release = 21
 }
 
 jar {
     from("LICENSE") {
         rename { "${it}_${project.archives_base_name}" }
-    }
-}
-
-// Optimize for POJAV (smaller file size)
-jar {
-    exclude '**/*.psd'
-    exclude '**/*.svg'
-    exclude '**/*.blend'
-    exclude '**/*.xcf'
-}
-
-// Fix for GitHub Actions
-loom {
-    accessWidenerPath = file("src/main/resources/tcosmatic.accesswidener")
-    
-    runs {
-        // Remove client/server runs for GitHub Actions
-        removeIf { it.name in ['client', 'server'] }
-    }
-}
-
-// Simplify publishing for GitHub
-publishing {
-    publications {
-        mavenJava(MavenPublication) {
-            from components.java
-        }
-    }
-    
-    repositories {
-        maven {
-            name = "GitHubPackages"
-            url = uri("https://maven.pkg.github.com/${System.getenv('GITHUB_REPOSITORY')}")
-            credentials {
-                username = System.getenv('GITHUB_ACTOR')
-                password = System.getenv('GITHUB_TOKEN')
-            }
-        }
     }
 }
